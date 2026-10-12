@@ -79,3 +79,18 @@ factice (limitation par adresse IP et journal), ce qui n'est pas sûr.
 2. Les comptes de démonstration ne sont pas activés par la commande (procédure manuelle).
 3. La commande exige un Super Administrateur existant, créé séparément par `create_super_admin`.
 4. Le marquage des comptes repose sur le domaine `.test` et le marqueur de l'organisme, sans champ dédié.
+
+## Écarts avec la spécification (§26)
+
+La spécification §26 n'est **pas** intégralement satisfaite. Matrice détaillée : rapport P2.11, §11.
+
+- **Différés** (modules futurs) : postes, activités, véhicules, événements, alertes issues d'anomalies injectées,
+  scénario « Poste Démo 07 » et `demo_trigger`. Ils conditionnent des critères de P3 (performance sur données de
+  démonstration), P4 (postes et alertes affichés) et P5 (anomalies injectées détectées).
+- **Partiels** : marquage `is_demo` des comptes (domaine `.test` et organisme, sans champ dédié ; un champ dédié par
+  migration additive est proposé) ; MFA des comptes `AGENT` et `ANALYST` (activation volontaire, ajoutée à la
+  procédure) ; mention « données de démonstration » absente de l'export CSV du journal d'audit (colonne dédiée
+  proposée).
+- **Reproductibilité** (graine fixée) : sans objet tant que le lot est déterministe.
+
+Statut inchangé : la présente ADR reste proposée jusqu'à l'arbitrage de ces écarts par le propriétaire.
