@@ -1,0 +1,15 @@
+# Débogage local uniquement (P2.10, ADR 0012) : publie les ports directs des services, tous liés à 127.0.0.1.
+# Le point d'entrée normal reste Nginx (127.0.0.1:8080). Une requête directe à l'API n'est pas un proxy de
+# confiance : X-Forwarded-For y est ignoré.
+#   docker compose -f docker-compose.yml -f infra/compose.host-ports.yml up -d
+services:
+  db:
+    ports: ["127.0.0.1:${RBI_DB_HOST_PORT:-5433}:5432"]
+  redis:
+    ports: ["127.0.0.1:${RBI_REDIS_HOST_PORT:-6379}:6379"]
+  storage:
+    ports: ["127.0.0.1:${RBI_S3_HOST_PORT:-8333}:8333"]
+  mailpit:
+    ports: ["127.0.0.1:${RBI_MAILPIT_SMTP_HOST_PORT:-1025}:1025"]
+  api:
+    ports: ["127.0.0.1:${RBI_API_HOST_PORT:-8000}:8000"]

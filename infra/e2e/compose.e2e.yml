@@ -1,0 +1,16 @@
+# Environnement E2E jetable (P2.10, ADR 0012) — utilisé UNIQUEMENT par scripts/e2e.py, projet « rbi-e2e ».
+# Frontend construit (mode intégré) servi par Nginx comme en préfiguration du déploiement ; DEBUG désactivé ;
+# volumes, réseau et ports distincts de l'environnement de développement.
+services:
+  frontend:
+    profiles: ["disabled"]  # pas de serveur Vite : frontend construit
+  api:
+    environment:
+      RBI_DJANGO_DEBUG: "false"
+  proxy:
+    environment:
+      RBI_FRONTEND_UPSTREAM: static
+    volumes:
+      - ${RBI_E2E_DIST:?frontend construit requis}:/srv/frontend:ro
+    depends_on: !override
+      api: { condition: service_healthy }

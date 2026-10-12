@@ -1,0 +1,14 @@
+# Variante TLS de l'environnement E2E (P2.10, ADR 0012) : certificat autosigné généré pour l'exécution, monté en
+# lecture seule, jamais versionné. HTTP redirige vers HTTPS ; HSTS sur les seules réponses HTTPS.
+services:
+  api:
+    environment:
+      RBI_HTTPS: "true"
+  proxy:
+    environment:
+      RBI_TLS: "on"
+      RBI_HTTPS_PUBLIC_PORT: ${RBI_HTTPS_HOST_PORT:?}
+    ports:
+      - "127.0.0.1:${RBI_HTTPS_HOST_PORT:?}:443"
+    volumes:
+      - ${RBI_E2E_TLS_DIR:?certificat requis}:/etc/nginx/tls:ro

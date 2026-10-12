@@ -1,0 +1,1 @@
+"""Activity, saisie manuelle, registre."""

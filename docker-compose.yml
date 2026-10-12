@@ -1,0 +1,283 @@
+# RIZTECH Border Intelligence — environnement de développement.
+#
+#   py scripts/init_env.py            # crée ou complète .env (secrets aléatoires, jamais commité)
+#   docker compose up -d --wait        # pile intégrée : http://127.0.0.1:8080 (Nginx → frontend Vite + API)
+#   docker compose --profile tools run --rm backend pytest
+#
+# Point d'entrée unique (P2.10, ADR 0012) : Nginx sur 127.0.0.1:8080. Seule l'interface Mailpit (liens de
+# réinitialisation) est aussi publiée. Accès direct aux autres services, pour le débogage uniquement :
+#   docker compose -f docker-compose.yml -f infra/compose.host-ports.yml up -d
+# Rôles PostgreSQL (ADR 0003) : `migrate` et les tests utilisent le propriétaire des tables ;
+# `api` et `worker` utilisent le rôle applicatif, non propriétaire et soumis au RLS.
+# Ajout ultérieur : Celery Beat (première tâche planifiée).
+name: rbi
+
+x-healthcheck-timing: &healthcheck-timing
+  interval: 5s
+  timeout: 5s
+  retries: 20
+  start_period: 10s
+
+x-backend-image: &backend-image
+  build:
+    context: ./backend
+    target: dev
+  image: rbi-backend:dev
+  volumes:
+    - ./backend:/app
+  networks: [rbi]
+
+# Configuration Django commune, sans identifiants PostgreSQL (fournis service par service).
+# Redis : base 0 = broker Celery, 1 = résultats Celery, 2 = cache Django, 3 = sessions
+# (4 et 5 : cache et sessions des tests, isolés de l'environnement de développement).
+x-django-env: &django-env
+  RBI_DJANGO_SECRET_KEY: ${RBI_DJANGO_SECRET_KEY:?voir .env.example}
+  RBI_DB_HOST: db
+  RBI_DB_PORT: "5432"
+  RBI_DB_NAME: ${RBI_DB_NAME:?voir .env.example}
+  RBI_CELERY_BROKER_URL: redis://:${REDIS_PASSWORD}@redis:6379/0
+  RBI_CELERY_RESULT_BACKEND: redis://:${REDIS_PASSWORD}@redis:6379/1
+  RBI_CACHE_URL: redis://:${REDIS_PASSWORD}@redis:6379/2
+  RBI_SESSION_CACHE_URL: redis://:${REDIS_PASSWORD}@redis:6379/3
+  RBI_FRONTEND_URL: ${RBI_FRONTEND_URL:-http://localhost:8080}  # liens des e-mails (réinitialisation)
+  TZ: UTC
+
+services:
+  db:
+    build: ./infra/postgres
+    image: rbi-postgres:16-postgis3.6
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: ${POSTGRES_SUPERUSER:?voir .env.example}
+      POSTGRES_PASSWORD: ${POSTGRES_SUPERUSER_PASSWORD:?voir .env.example}
+      POSTGRES_DB: postgres
+      # Connexions TCP : scram-sha-256. Socket local (interne au conteneur) : trust, requis par l'amorçage.
+      POSTGRES_INITDB_ARGS: --encoding=UTF8 --locale=C.UTF-8 --auth-host=scram-sha-256
+      RBI_DB_NAME: ${RBI_DB_NAME:?voir .env.example}
+      RBI_DB_OWNER: ${RBI_DB_OWNER:?voir .env.example}
+      RBI_DB_OWNER_PASSWORD: ${RBI_DB_OWNER_PASSWORD:?voir .env.example}
+      RBI_DB_APP_USER: ${RBI_DB_APP_USER:?voir .env.example}
+      RBI_DB_APP_PASSWORD: ${RBI_DB_APP_PASSWORD:?voir .env.example}
+      TZ: UTC
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    # TCP explicite : pendant l'initialisation, le serveur temporaire n'écoute que sur le socket local.
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -h 127.0.0.1 -U \"$$POSTGRES_USER\" -d \"$$RBI_DB_NAME\""]
+      <<: *healthcheck-timing
+    networks: [rbi]
+
+  redis:
+    image: redis:7.4.11-alpine
+    restart: unless-stopped
+    environment:
+      REDIS_PASSWORD: ${REDIS_PASSWORD:?voir .env.example}
+      REDISCLI_AUTH: ${REDIS_PASSWORD}
+    command: ["sh", "-c", "exec redis-server --requirepass \"$$REDIS_PASSWORD\" --appendonly yes --maxmemory-policy noeviction"]
+    volumes:
+      - redisdata:/data
+    healthcheck:
+      test: ["CMD-SHELL", "redis-cli ping | grep -q PONG"]
+      <<: *healthcheck-timing
+    networks: [rbi]
+
+  # Stockage objet compatible S3 (remplace MinIO, dont les images ne sont plus distribuées : ADR 0003).
+  # Seul le point d'accès S3 (authentifié) est publié ; master, filer et volume restent internes.
+  storage:
+    image: chrislusf/seaweedfs:4.47
+    restart: unless-stopped
+    environment:
+      AWS_ACCESS_KEY_ID: ${RBI_S3_ACCESS_KEY:?voir .env.example}
+      AWS_SECRET_ACCESS_KEY: ${RBI_S3_SECRET_KEY:?voir .env.example}
+    command:
+      - mini
+      - -dir=/data
+      - -ip=storage
+      - -bucket=${RBI_S3_BUCKET:?voir .env.example}
+      - -admin.ui=false
+      - -webdav=false
+      - -s3.port.iceberg=0
+      - -s3.port.lance=0
+      - -s3.autoCreateBucket=false
+    volumes:
+      - s3data:/data
+    healthcheck:
+      test: ["CMD-SHELL", "wget -q -O /dev/null http://127.0.0.1:8333/status"]
+      <<: *healthcheck-timing
+    networks: [rbi]
+
+  # Capture de tous les e-mails sortants (ADR 0001 · P12) : aucun SMTP réel.
+  mailpit:
+    image: axllent/mailpit:v1.31.1
+    restart: unless-stopped
+    environment:
+      MP_MAX_MESSAGES: 500
+      TZ: UTC
+    ports:
+      - "127.0.0.1:${RBI_MAILPIT_UI_HOST_PORT:-8025}:8025"  # interface : liens de réinitialisation en local
+    healthcheck:
+      test: ["CMD", "/mailpit", "readyz"]
+      <<: *healthcheck-timing
+    networks: [rbi]
+
+  # Applique les migrations avec le rôle propriétaire, puis s'arrête.
+  migrate:
+    <<: *backend-image
+    command: ["python", "manage.py", "migrate", "--noinput"]
+    restart: "no"
+    environment:
+      <<: *django-env
+      DJANGO_SETTINGS_MODULE: config.settings.development
+      RBI_DB_USER: ${RBI_DB_OWNER:?voir .env.example}
+      RBI_DB_PASSWORD: ${RBI_DB_OWNER_PASSWORD:?voir .env.example}
+      RBI_DB_APPLICATION_NAME: rbi-migrate
+      RBI_DB_APP_USER: ${RBI_DB_APP_USER:?voir .env.example}  # nommé dans les privilèges RLS (P2.6)
+    depends_on:
+      db: { condition: service_healthy }
+
+  # API Django (serveur de développement ; serveur WSGI de production ajouté avec le déploiement).
+  api:
+    <<: *backend-image
+    # Refuse de démarrer si le rôle PostgreSQL peut contourner le RLS (superutilisateur, BYPASSRLS, propriétaire).
+    command: ["sh", "-c", "python manage.py check_db_role && exec python manage.py runserver 0.0.0.0:8000"]
+    restart: unless-stopped
+    environment:
+      <<: *django-env
+      DJANGO_SETTINGS_MODULE: config.settings.development
+      RBI_DB_USER: ${RBI_DB_APP_USER:?voir .env.example}
+      RBI_DB_PASSWORD: ${RBI_DB_APP_PASSWORD:?voir .env.example}
+      RBI_DB_APP_USER: ${RBI_DB_APP_USER}
+      RBI_DB_APPLICATION_NAME: rbi-api
+      RBI_DJANGO_ALLOWED_HOSTS: localhost,127.0.0.1,api
+      # Seul Nginx (adresse fixe sur le réseau edge) est un proxy de confiance (P2.10, ADR 0012).
+      RBI_TRUSTED_PROXIES: ${RBI_EDGE_PROXY_IP:-172.29.89.2}/32
+      RBI_HTTPS: ${RBI_HTTPS:-false}
+    networks: [rbi, edge]
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request as u; u.urlopen('http://localhost:8000/api/v1/health/ready', timeout=4)"]
+      <<: *healthcheck-timing
+    depends_on:
+      migrate: { condition: service_completed_successfully }
+      redis: { condition: service_healthy }
+
+  # Worker Celery : aucune tâche métier en P2.2, seulement la tâche de vérification health.ping.
+  worker:
+    <<: *backend-image
+    command:
+      - sh
+      - -c
+      - python manage.py check_db_role && exec celery -A config worker --loglevel=INFO --concurrency=2 --hostname=worker@%h
+    restart: unless-stopped
+    environment:
+      <<: *django-env
+      DJANGO_SETTINGS_MODULE: config.settings.development
+      RBI_DB_USER: ${RBI_DB_APP_USER:?voir .env.example}
+      RBI_DB_PASSWORD: ${RBI_DB_APP_PASSWORD:?voir .env.example}
+      RBI_DB_APP_USER: ${RBI_DB_APP_USER}
+      RBI_DB_APPLICATION_NAME: rbi-worker
+    healthcheck:
+      test: ["CMD-SHELL", "celery -A config inspect ping --destination worker@$$HOSTNAME --timeout 5 | grep -q pong"]
+      interval: 15s
+      timeout: 15s
+      retries: 10
+      start_period: 20s
+    depends_on:
+      migrate: { condition: service_completed_successfully }
+      redis: { condition: service_healthy }
+
+  # Outillage : pytest, ruff, mypy. Le rôle propriétaire crée la base de test `test_rbi` ;
+  # les identifiants des deux rôles servent aux tests d'infrastructure. Jamais le superutilisateur.
+  backend:
+    <<: *backend-image
+    profiles: [tools]
+    environment:
+      <<: *django-env
+      DJANGO_SETTINGS_MODULE: config.settings.test
+      RBI_CACHE_URL: redis://:${REDIS_PASSWORD}@redis:6379/4
+      RBI_SESSION_CACHE_URL: redis://:${REDIS_PASSWORD}@redis:6379/5
+      RBI_DB_USER: ${RBI_DB_OWNER}
+      RBI_DB_PASSWORD: ${RBI_DB_OWNER_PASSWORD}
+      RBI_DB_APPLICATION_NAME: rbi-tests
+      RBI_DB_OWNER: ${RBI_DB_OWNER}
+      RBI_DB_OWNER_PASSWORD: ${RBI_DB_OWNER_PASSWORD}
+      RBI_DB_APP_USER: ${RBI_DB_APP_USER}
+      RBI_DB_APP_PASSWORD: ${RBI_DB_APP_PASSWORD}
+      RBI_REDIS_URL: redis://:${REDIS_PASSWORD}@redis:6379/0
+      RBI_S3_ENDPOINT_URL: http://storage:8333
+      RBI_S3_ACCESS_KEY: ${RBI_S3_ACCESS_KEY}
+      RBI_S3_SECRET_KEY: ${RBI_S3_SECRET_KEY}
+      RBI_S3_BUCKET: ${RBI_S3_BUCKET}
+      RBI_SMTP_HOST: mailpit
+      RBI_SMTP_PORT: "1025"
+      RBI_MAILPIT_API_URL: http://mailpit:8025
+      RBI_PROXY_URL: http://proxy
+      RBI_EDGE_PROXY_IP: ${RBI_EDGE_PROXY_IP:-172.29.89.2}
+    networks: [rbi, edge]
+    depends_on:
+      db: { condition: service_healthy }
+      redis: { condition: service_healthy }
+      storage: { condition: service_healthy }
+      mailpit: { condition: service_healthy }
+      worker: { condition: service_healthy }
+      api: { condition: service_healthy }
+      proxy: { condition: service_healthy }
+
+  # Serveur de développement Vite (P2.10) : mode intégré (API réelle ; MSW pour les seuls modules reportés).
+  # Réseau edge uniquement : aucun accès à la base, à Redis ni à l'API autrement que par le navigateur.
+  frontend:
+    build: ./infra/frontend
+    image: rbi-frontend-dev:24.19.0
+    restart: unless-stopped
+    environment:
+      VITE_APP_ENV: demo
+      VITE_API_MOCKS: deferred
+      RBI_VITE_HMR_CLIENT_PORT: ${RBI_HTTP_HOST_PORT:-8080}
+      RBI_VITE_POLLING: "true"  # sources montées depuis Windows : pas d'événements inotify
+    volumes:
+      - ./frontend:/app
+      - frontend_node_modules:/app/node_modules
+    healthcheck:
+      test: ["CMD-SHELL", "wget -q -O /dev/null http://127.0.0.1:5173/ || exit 1"]
+      interval: 5s
+      timeout: 5s
+      retries: 60
+      start_period: 60s
+    networks: [edge]
+
+  # Reverse proxy : point d'entrée unique, frontend et API sur la même origine (cookie de session, CSRF).
+  proxy:
+    build: ./infra/nginx
+    image: rbi-proxy:1.30.4
+    restart: unless-stopped
+    environment:
+      RBI_FRONTEND_UPSTREAM: vite
+      RBI_TLS: "off"
+      RBI_SERVER_NAMES: localhost 127.0.0.1
+    ports:
+      - "127.0.0.1:${RBI_HTTP_HOST_PORT:-8080}:80"
+    healthcheck:
+      test: ["CMD-SHELL", "wget -q -O /dev/null http://127.0.0.1:81/health || exit 1"]
+      <<: *healthcheck-timing
+    depends_on:
+      api: { condition: service_healthy }
+      frontend: { condition: service_healthy }
+    networks:
+      edge:
+        ipv4_address: ${RBI_EDGE_PROXY_IP:-172.29.89.2}
+
+volumes:
+  pgdata:
+  redisdata:
+  s3data:
+  frontend_node_modules:
+
+networks:
+  rbi:
+  # Réseau du proxy : Nginx, API, frontend de développement (et outillage de test). Adresse de Nginx fixe :
+  # c'est la seule déclarée dans RBI_TRUSTED_PROXIES.
+  edge:
+    ipam:
+      config:
+        - subnet: ${RBI_EDGE_SUBNET:-172.29.89.0/28}
+          # Adresses attribuées automatiquement (.8 à .15) : l'adresse fixe de Nginx (.2) n'est jamais prise.
+          ip_range: ${RBI_EDGE_DYNAMIC_RANGE:-172.29.89.8/29}

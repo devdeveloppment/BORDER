@@ -1,0 +1,72 @@
+[project]
+name = "rbi-backend"
+version = "0.1.0"
+description = "RIZTECH Border Intelligence — API Django (monolithe modulaire)"
+readme = "README.md"
+requires-python = ">=3.12,<3.14"
+# Uniquement la stack imposée (§13) et les clients des services d'infrastructure.
+# Les dépendances propres aux sous-phases suivantes (MFA, Argon2, stockage Django…) y seront ajoutées.
+dependencies = [
+  "django>=5.2,<5.3",
+  "djangorestframework>=3.17.2,<3.18",  # 3.17.2 : CVE-2026-73228, CVE-2026-73229
+  "drf-spectacular>=0.28,<0.30",
+  "psycopg[binary]>=3.2,<3.4",
+  "celery[redis]>=5.5,<6",
+  "django-celery-beat>=2.8,<3",
+  "redis>=5.2,<7",
+  "boto3>=1.40,<2",
+  # P2.5 : hachage Argon2 (§19.1) et TOTP (§13, django-otp).
+  "argon2-cffi>=25.1,<26",
+  "django-otp>=1.7.3,<2",
+]
+
+[dependency-groups]
+dev = [
+  "pytest>=8.4,<10",
+  "pytest-django>=4.11,<5",
+  "ruff>=0.13,<1",
+  "mypy>=1.18,<2",
+  "django-stubs[compatible-mypy]>=5.2.9,<5.3",
+  "celery-types>=0.26,<1",
+  "djangorestframework-stubs[compatible-mypy]>=3.16,<4",
+]
+
+[tool.uv]
+package = false
+# Chaîne d'approvisionnement : aucune version publiée depuis moins de deux semaines.
+# Date à avancer volontairement lors des mises à jour de dépendances (uv lock --upgrade).
+exclude-newer = "2026-09-24T00:00:00Z"
+
+[tool.pytest.ini_options]
+DJANGO_SETTINGS_MODULE = "config.settings.test"
+testpaths = ["tests", "apps"]
+addopts = "-ra --strict-markers"
+markers = [
+  "infra: nécessite les services Docker Compose (PostgreSQL, Redis, stockage S3, Mailpit)",
+  "db_owner: le corps du test s'exécute avec le rôle propriétaire (schéma, migrations), pas sous RLS",
+]
+
+[tool.ruff]
+target-version = "py312"
+line-length = 110
+# Migrations générées par Django : ni reformatées ni analysées.
+extend-exclude = ["**/migrations/*.py"]
+
+[tool.ruff.lint]
+select = ["E", "W", "F", "I", "B", "UP", "S", "DJ", "SIM", "RUF"]
+
+[tool.ruff.lint.per-file-ignores]
+"tests/**" = ["S101", "S105", "S106"]
+"apps/**/tests/**" = ["S101", "S105", "S106"]
+"config/settings/*.py" = ["F405"]
+"conftest.py" = ["S105", "S106"]
+
+[tool.mypy]
+python_version = "3.12"
+strict = true
+ignore_missing_imports = true
+plugins = ["mypy_django_plugin.main"]
+exclude = ["/migrations/"]
+
+[tool.django-stubs]
+django_settings_module = "config.settings.test"

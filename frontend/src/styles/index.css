@@ -1,0 +1,79 @@
+@import "tailwindcss";
+@import "@fontsource-variable/inter";
+
+/*
+ * Design system RBI — jetons issus de la spécification interne non publiée §11.2.
+ * Les couleurs fonctionnelles (vert / orange / rouge) sont RÉSERVÉES aux niveaux d'indicateur
+ * et toujours doublées d'un libellé ou d'une icône. Les variantes "-ink" sont des teintes
+ * assombries utilisées pour le TEXTE afin de respecter le contraste WCAG 2.1 AA (≥ 4,5:1).
+ */
+@theme {
+  --font-sans: "Inter Variable", system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+
+  --color-navy-950: #071528;
+  --color-navy-900: #0b1f3a;
+  --color-navy-800: #14305a;
+  --color-navy-700: #1d3f72;
+
+  --color-brand-700: #0d4f9e;
+  --color-brand-600: #1565c0;
+  --color-brand-500: #1e78d8;
+  --color-brand-100: #cfe0f5;
+  --color-brand-50: #e3eefa;
+
+  --color-ink-900: #111827;
+  --color-ink-700: #344054;
+  --color-ink-500: #5f6b7a;
+  --color-line: #d9dee5;
+  --color-surface: #ffffff;
+  --color-surface-alt: #f2f4f7;
+
+  --color-ok: #2e7d32;
+  --color-ok-ink: #1b5e20;
+  --color-ok-soft: #e8f3e9;
+  --color-warn: #ef6c00;
+  --color-warn-ink: #8a3a00;
+  --color-warn-soft: #fff1e3;
+  --color-danger: #c62828;
+  --color-danger-ink: #9b1c1c;
+  --color-danger-soft: #fdecec;
+  --color-critical: #7f1010;
+  --color-critical-soft: #f8dada;
+
+  --radius-card: 8px;
+  --shadow-card: 0 1px 2px rgb(16 24 40 / 0.06), 0 1px 3px rgb(16 24 40 / 0.04);
+
+  --animate-fade-in: fade-in 150ms ease-out;
+  @keyframes fade-in {
+    from { opacity: 0; }
+    to { opacity: 1; }
+  }
+}
+
+@layer base {
+  html {
+    -webkit-text-size-adjust: 100%;
+    text-rendering: optimizeLegibility;
+  }
+  body {
+    @apply bg-surface-alt font-sans text-ink-900 antialiased;
+    font-size: 14px;
+    line-height: 1.5;
+  }
+  :focus-visible {
+    outline: 2px solid var(--color-brand-600);
+    outline-offset: 2px;
+  }
+  .tabular {
+    font-variant-numeric: tabular-nums;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    transition-duration: 0.01ms !important;
+  }
+}
