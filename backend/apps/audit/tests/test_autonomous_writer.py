@@ -111,7 +111,7 @@ def test_denial_while_business_transaction_holds_locks_does_not_deadlock(
     assert (event.outcome, event.scope, event.metadata) == (
         "denied",
         "platform",
-        {"reason": "no_valid_authorization"},
+        {"reason": "no_valid_authorization", "demo": True},  # organisme de démonstration (fabrique), P2.11
     )
 
 

@@ -61,7 +61,8 @@ def snapshot() -> list[tuple[Any, ...]]:
             for o in Organization.objects.order_by("short_name")
         ]
         users = [
-            (u.email, u.organization_id, u.is_active, u.password) for u in User.objects.order_by("email")
+            (u.email, u.organization_id, u.is_active, u.is_demo, u.password)
+            for u in User.objects.order_by("email")
         ]
     return orgs + users
 
@@ -352,11 +353,23 @@ def test_api_serves_the_seeded_organisation_and_its_accounts(
 # --- Absence de secrets -----------------------------------------------------------------------------
 
 
+SECRET_MARKERS = ("token", "totp", "secret", "motdepasse", "password=")
+
+
 def test_the_command_output_contains_no_secret(actor: User, django_capture_on_commit_callbacks: Any) -> None:
-    seed_once(actor, django_capture_on_commit_callbacks)
-    output = run_seed(actor.email).lower()
-    for marker in ("token", "totp", "secret", "motdepasse", "password="):
-        assert marker not in output
+    """La sortie de la PREMIÈRE exécution est contrôlée seule : ce contrôle ne dépend pas de l'idempotence.
+    Un refus de la seconde exécution est signalé comme tel (lacune CP-05 : l'échec passait par ce chemin)."""
+    with django_capture_on_commit_callbacks(execute=True):
+        first = run_seed(actor.email).lower()
+    assert "créé" in first
+    for marker in SECRET_MARKERS:
+        assert marker not in first, marker
+    try:
+        second = run_seed(actor.email).lower()
+    except CommandError as exc:
+        pytest.fail(f"Seconde exécution refusée : idempotence rompue ({exc})")
+    for marker in SECRET_MARKERS:
+        assert marker not in second, marker
 
 
 def test_the_seed_module_hardcodes_no_credential() -> None:
@@ -377,3 +390,56 @@ def test_application_filter_isolates_without_rls(
     assert sorted(r.user.email for r in rows) == sorted(
         f"{local}@demo-a.rbi.test" for local in ROLES_BY_ACCOUNT
     )
+
+
+# --- Marquage des comptes (User.is_demo, §26) -----------------------------------------------------
+
+
+def test_seeded_accounts_are_marked_and_only_in_demo_organisations(
+    actor: User, django_capture_on_commit_callbacks: Any
+) -> None:
+    seed_once(actor, django_capture_on_commit_callbacks)
+    with owner():
+        marked = list(User.objects.filter(is_demo=True).select_related("organization"))
+        unmarked_platform = User.objects.filter(organization__isnull=True, is_demo=True).count()
+    assert len(marked) == 10
+    assert all(u.organization is not None and u.organization.is_demo for u in marked)
+    assert unmarked_platform == 0
+    with owner():
+        assert User.objects.get(pk=actor.pk).is_demo is False
+
+
+def test_an_unmarked_account_of_the_set_refuses_without_writes(
+    actor: User, django_capture_on_commit_callbacks: Any
+) -> None:
+    seed_once(actor, django_capture_on_commit_callbacks)
+    with owner():
+        User.objects.filter(email="agent@demo-a.rbi.test").update(is_demo=False)
+    before = snapshot()
+    with pytest.raises(CommandError, match="hors du jeu"):
+        run_seed(actor.email)
+    assert snapshot() == before
+
+
+def test_services_refuse_a_demo_account_outside_a_demo_organisation(
+    admin_a: User, org_a: Organization
+) -> None:
+    from apps.organizations.exceptions import InvalidTransition
+
+    with owner():
+        Organization.objects.filter(pk=org_a.pk).update(is_demo=False)  # organisme ordinaire
+    with pytest.raises(InvalidTransition):
+        users_services.create_organization_user(
+            admin_a, context_for_user(admin_a), email="x@demo-a.rbi.test", roles=("AGENT",), is_demo=True
+        )
+    with owner():
+        assert not User.objects.filter(email="x@demo-a.rbi.test").exists()
+
+
+def test_an_account_created_through_the_api_is_never_marked(admin_a: User) -> None:
+    api = signed_in(admin_a)
+    response = api.post("/users", {"email": "nouveau@demo-a.rbi.test", "roles": ["AGENT"]})
+    assert response.status_code == 201, response.content[:200]
+    assert "is_demo" not in response.json()  # contrat P1 inchangé : le marqueur n'est pas exposé
+    with owner():
+        assert User.objects.get(email="nouveau@demo-a.rbi.test").is_demo is False

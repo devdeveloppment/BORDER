@@ -181,7 +181,10 @@ paths:
             text/csv:
               schema:
                 type: string
-          description: Fichier CSV (UTF-8), 10 000 lignes au plus.
+          description: 'Fichier CSV (UTF-8), 10 000 lignes au plus. Première colonne
+            « mention » : « DONNÉES DE DÉMONSTRATION » pour un organisme de démonstration,
+            vide sinon ; journal plateforme : statut enregistré dans l''entrée, «
+            STATUT INDÉTERMINÉ » si un organisme est visé sans statut établi.'
         '400':
           content:
             application/json:
@@ -907,7 +910,10 @@ paths:
             text/csv:
               schema:
                 type: string
-          description: Fichier CSV (UTF-8), 10 000 lignes au plus.
+          description: 'Fichier CSV (UTF-8), 10 000 lignes au plus. Première colonne
+            « mention » : « DONNÉES DE DÉMONSTRATION » pour un organisme de démonstration,
+            vide sinon ; journal plateforme : statut enregistré dans l''entrée, «
+            STATUT INDÉTERMINÉ » si un organisme est visé sans statut établi.'
         '400':
           content:
             application/json:

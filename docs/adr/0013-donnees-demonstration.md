@@ -1,6 +1,7 @@
 # ADR 0013 — Données fictives de démonstration (`seed_demo`, P2.11)
 
-- **Statut** : proposée (implémentée sur validation de conception ; en attente de validation de P2.11)
+- **Statut** : proposée (implémentée sur validation de conception ; P2.11 validée avec réserves le 12/10/2026 ;
+  acceptation de l'ADR et arbitrage des écarts §26 en attente d'une décision distincte du propriétaire)
 - **Date** : 12/10/2026
 - **Source** : spécification interne non publiée v1.0 §26 (données de démonstration) ; feuille de route P2 (P2.11) ; décisions D1 à
   D8 de la validation de conception P2.11 ; ADR 0005 (multi-organismes), 0006 (RBAC), 0007 (authentification et MFA),
@@ -35,9 +36,20 @@ l'acteur désigné. Aucune écriture directe, aucun contournement de RLS ni de p
 ### 4. Marquage
 
 - Organismes : `is_demo = true` et sigles déterministes. Un organisme homonyme sans marqueur fait refuser le lot.
-- Comptes : adresses au domaine réservé `.test` (`admin@demo-a.rbi.test`, etc.). Un compte existant hors du jeu fait
-  refuser le lot.
-- Aucun champ n'est ajouté à `User` ni à `DataSource` (pas de migration).
+- Comptes : champ `User.is_demo` (migration additive 0006, faux par défaut, valeur par défaut aussi posée en base),
+  positionné uniquement par `seed_demo` à travers les services ; adresses au domaine réservé `.test`. Les services
+  refusent un compte de démonstration hors d'un organisme de démonstration. Un compte existant hors du jeu, ou un
+  compte du jeu sans marqueur, fait refuser le lot. Le marqueur n'est pas exposé par l'API (contrat P1 inchangé).
+- Export CSV du journal d'un organisme : première colonne `mention` (« DONNÉES DE DÉMONSTRATION » pour un organisme
+  de démonstration, vide sinon), selon le statut de l'organisme au moment de l'export.
+- Événements plateforme qui visent un organisme : la clé `demo` (booléen) est écrite dans les métadonnées **au moment
+  de l'événement**, par l'opération plateforme qui a déjà l'organisme dans son périmètre ; elle entre dans
+  l'empreinte de l'entrée. L'export du journal plateforme la relit ligne par ligne, dans les seules entrées que
+  l'auditeur peut lire : `true` donne « DONNÉES DE DÉMONSTRATION » ; `false` ou entrée sans organisme visé donnent une
+  cellule vide ; clé absente, nulle ou mal typée donne « STATUT INDÉTERMINÉ » ; une mention impossible à établir fait
+  refuser l'export. Aucune fonction SQL, aucun privilège, aucune politique RLS ne sont ajoutés (une fonction
+  `SECURITY DEFINER` dédiée a été étudiée puis écartée : elle révélait le statut d'organismes hors du périmètre).
+- Aucun champ n'est ajouté à `DataSource`.
 
 ### 5. Gardes-fous (avant toute écriture)
 
@@ -67,7 +79,8 @@ factice (limitation par adresse IP et journal), ce qui n'est pas sûr.
 
 ## Conséquences
 
-- Aucune migration, aucun privilège ajouté à `rbi_app`, aucun changement de l'API ni des politiques RLS.
+- Une migration additive (`users.0006`), aucun privilège ajouté à `rbi_app`, aucune politique RLS modifiée ; seule
+  la description de l'export CSV change dans le contrat OpenAPI.
 - Relancer la commande est sans effet sur des données déjà présentes (idempotence vérifiée).
 - Les données créées portent le marqueur de démonstration ; leur présence dans l'interface reste soumise au bandeau
   « Données de démonstration » déjà en place (P2.10).
@@ -78,7 +91,8 @@ factice (limitation par adresse IP et journal), ce qui n'est pas sûr.
    avec leurs modules (P3 à P7). Le scénario « Poste Démo 07 » et `demo_trigger` dépendent du module d'alertes.
 2. Les comptes de démonstration ne sont pas activés par la commande (procédure manuelle).
 3. La commande exige un Super Administrateur existant, créé séparément par `create_super_admin`.
-4. Le marquage des comptes repose sur le domaine `.test` et le marqueur de l'organisme, sans champ dédié.
+4. Journal plateforme : les entrées antérieures au lot ne portent pas la clé `demo` ; si l'une vise un organisme,
+   elle apparaît « STATUT INDÉTERMINÉ ». Aucune valeur n'est fabriquée a posteriori (journal en insertion seule).
 
 ## Écarts avec la spécification (§26)
 
@@ -87,10 +101,10 @@ La spécification §26 n'est **pas** intégralement satisfaite. Matrice détaill
 - **Différés** (modules futurs) : postes, activités, véhicules, événements, alertes issues d'anomalies injectées,
   scénario « Poste Démo 07 » et `demo_trigger`. Ils conditionnent des critères de P3 (performance sur données de
   démonstration), P4 (postes et alertes affichés) et P5 (anomalies injectées détectées).
-- **Partiels** : marquage `is_demo` des comptes (domaine `.test` et organisme, sans champ dédié ; un champ dédié par
-  migration additive est proposé) ; MFA des comptes `AGENT` et `ANALYST` (activation volontaire, ajoutée à la
-  procédure) ; mention « données de démonstration » absente de l'export CSV du journal d'audit (colonne dédiée
-  proposée).
+- **Partiels** : MFA des comptes `AGENT` et `ANALYST` (activation volontaire, ajoutée à la procédure) ; rapports non
+  construits.
+- **Traités par le lot préparé** (en attente d'intégration) : marquage `is_demo` des comptes ; mention dans l'export
+  du journal d'un organisme et dans celui du journal plateforme (statut enregistré dans l'événement).
 - **Reproductibilité** (graine fixée) : sans objet tant que le lot est déterministe.
 
 Statut inchangé : la présente ADR reste proposée jusqu'à l'arbitrage de ces écarts par le propriétaire.

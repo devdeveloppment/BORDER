@@ -10,7 +10,8 @@ Garanties :
   ``platform_scope`` pour l'acteur désigné ; aucune écriture directe, aucun contournement de RLS ;
 - le lot est planifié en lecture seule (refus avant toute écriture en cas de collision), puis appliqué
   dans une seule transaction ;
-- marquage : organismes ``is_demo = true`` aux sigles déterministes ; comptes au domaine réservé ``.test`` ;
+- marquage : organismes ``is_demo = true`` aux sigles déterministes ; comptes ``is_demo = true`` au
+  domaine réservé ``.test`` ;
 - aucun mot de passe, secret TOTP, code de récupération ni jeton : les comptes sont créés sans mot de passe
   utilisable et s'activent par le parcours « mot de passe oublié » (procédure documentée).
 """
@@ -232,7 +233,12 @@ def _plan(scope_org: PlatformScope, scope_admin: PlatformScope) -> list[OrgPlan]
             user = _find_user(email)
             if user is None:
                 continue
-            if user.organization_id is None or existing is None or user.organization_id != existing.pk:
+            if (
+                user.organization_id is None
+                or existing is None
+                or user.organization_id != existing.pk
+                or not user.is_demo
+            ):
                 raise SeedRefused(f"Collision : le compte {email} existe hors du jeu de démonstration.")
             users[email] = user
         roles = _org_role_codes(scope_admin, [u.pk for u in users.values()]) if users else {}
@@ -298,6 +304,7 @@ def _apply(scope_org: PlatformScope, scope_admin: PlatformScope, plans: list[Org
                 email=admin_email,
                 first_name="Démo",
                 last_name=f"{admin_spec.label} {spec.letter}",
+                is_demo=True,
             )
             summary.created.append(f"compte {admin_email} ({admin_spec.role})")
         else:
@@ -323,6 +330,7 @@ def _apply(scope_org: PlatformScope, scope_admin: PlatformScope, plans: list[Org
                 first_name="Démo",
                 last_name=f"{account.label} {spec.letter}",
                 roles=(account.role,),
+                is_demo=True,
             )
             summary.created.append(f"compte {email} ({account.role})")
         for account in spec.accounts:

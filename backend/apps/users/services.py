@@ -110,6 +110,12 @@ def _attach(user: User, role: Role, assigned_by: User | None) -> UserRole:
     )
 
 
+def _require_demo_organization(is_demo: bool, organization: Organization) -> None:
+    """Un compte de démonstration n'existe que dans un organisme de démonstration (§26)."""
+    if is_demo and not organization.is_demo:
+        raise InvalidTransition("Un compte de démonstration exige un organisme de démonstration.")
+
+
 # --- Niveau plateforme -----------------------------------------------------------------------
 
 
@@ -139,14 +145,23 @@ def bootstrap_super_admin(*, email: str, password: str) -> User:
 @platform_operation(INSTITUTIONAL_ADMINS_PERMISSION)
 @transaction.atomic
 def create_institutional_admin(
-    scope: PlatformScope, organization: Organization, *, email: str, first_name: str = "", last_name: str = ""
+    scope: PlatformScope,
+    organization: Organization,
+    *,
+    email: str,
+    first_name: str = "",
+    last_name: str = "",
+    is_demo: bool = False,
 ) -> User:
     """Désigne le premier Administrateur institutionnel d'un organisme AUTORISÉ ou ACTIF (§9.16, étape 5)."""
     require_scope(scope, INSTITUTIONAL_ADMINS_PERMISSION)
     org = Organization.objects.select_for_update().get(pk=organization.pk)
     if org.status not in {Organization.Status.AUTORISEE, Organization.Status.ACTIVE}:
         raise InvalidTransition(f"Désignation impossible pour un organisme au statut {org.status}.")
-    user = User.objects.create_user(email=email, first_name=first_name, last_name=last_name, organization=org)
+    _require_demo_organization(is_demo, org)
+    user = User.objects.create_user(
+        email=email, first_name=first_name, last_name=last_name, organization=org, is_demo=is_demo
+    )
     admin = _organization_role(INSTITUTIONAL_ADMIN)
     _attach(user, admin, assigned_by=None)
     record_event(
@@ -158,6 +173,7 @@ def create_institutional_admin(
         object_type="user",
         object_id=user.pk,
         new_value={"roles": [INSTITUTIONAL_ADMIN]},
+        details={"demo": org.is_demo},
     )
     return user
 
@@ -175,12 +191,19 @@ def create_organization_user(
     first_name: str = "",
     last_name: str = "",
     roles: tuple[str, ...] = (),
+    is_demo: bool = False,
 ) -> User:
     """Crée un compte dans l'organisme du CONTEXTE (jamais dans un organisme fourni par l'appelant)."""
     require_permission(actor, "users.manage", context)
     resolved = [_organization_role(code) for code in roles]
+    if is_demo:
+        _require_demo_organization(is_demo, Organization.objects.get(pk=context.organization_id))
     user = User.objects.create_user(
-        email=email, first_name=first_name, last_name=last_name, organization_id=context.organization_id
+        email=email,
+        first_name=first_name,
+        last_name=last_name,
+        organization_id=context.organization_id,
+        is_demo=is_demo,
     )
     for role in resolved:
         _attach(user, role, assigned_by=actor)

@@ -26,7 +26,7 @@ from django.utils import timezone
 from drf_spectacular.types import OpenApiTypes
 from drf_spectacular.utils import OpenApiParameter, OpenApiResponse, extend_schema
 from rest_framework import serializers
-from rest_framework.exceptions import ValidationError
+from rest_framework.exceptions import APIException, ValidationError
 from rest_framework.renderers import BaseRenderer, JSONRenderer
 from rest_framework.request import Request
 from rest_framework.response import Response
@@ -42,7 +42,7 @@ from . import selectors
 from .catalog import OBJECT_TYPES
 from .integrity import ChainReport
 from .models import AuditLog
-from .selectors import PLATFORM_AUDIT, AuditQuery, AuditResult, ExportTooLarge
+from .selectors import PLATFORM_AUDIT, AuditQuery, AuditResult, ExportMentionError, ExportTooLarge
 
 ORG_TAG = "Journal d'audit — organisme"
 PLATFORM_TAG = "Journal d'audit — plateforme"
@@ -219,6 +219,19 @@ CSV_COLUMNS = (
 )
 
 
+# Première colonne de chaque export : identifie les données de démonstration sans rendre le CSV invalide.
+DEMO_MENTION = "DONNÉES DE DÉMONSTRATION"
+UNDETERMINED_MENTION = "STATUT INDÉTERMINÉ"  # journal plateforme : organisme visé, statut non établi
+MENTIONS = {"demo": DEMO_MENTION, "undetermined": UNDETERMINED_MENTION, None: None}
+
+
+class ExportRefused(APIException):
+    """Mention de démonstration impossible à établir : refus explicite, jamais une cellule vide."""
+
+    status_code = 500
+    default_detail = "Export impossible : la mention de démonstration n'a pas pu être établie."
+
+
 def _cell(value: Any) -> str:
     """Valeur CSV ; neutralise l'injection de formules dans un tableur (=, +, -, @, tabulation, retour)."""
     if value is None:
@@ -230,13 +243,19 @@ def _cell(value: Any) -> str:
 def _csv_response(result: AuditResult, name: str) -> HttpResponse:
     buffer = io.StringIO()
     writer = csv.writer(buffer)
-    writer.writerow(CSV_COLUMNS)
+    writer.writerow(("mention", *CSV_COLUMNS))
+    organization_mention = _cell(DEMO_MENTION if result.demo else None)
     for row in result.rows:
         entry = _entry(row, result.actors)
-        writer.writerow([_cell(entry[column]) for column in CSV_COLUMNS])
+        # Journal plateforme : mention par entrée ; une entrée sans statut calculé lève une erreur (KeyError).
+        mention = (
+            organization_mention if result.statuses is None else _cell(MENTIONS[result.statuses[row.id]])
+        )
+        writer.writerow([mention, *(_cell(entry[column]) for column in CSV_COLUMNS)])
     stamp = timezone.now().strftime("%Y%m%dT%H%M%SZ")
     response = HttpResponse(buffer.getvalue().encode("utf-8"), content_type="text/csv; charset=utf-8")
-    response["Content-Disposition"] = f'attachment; filename="rbi-audit-{name}-{stamp}.csv"'
+    suffix = "-demonstration" if result.demo else ""
+    response["Content-Disposition"] = f'attachment; filename="rbi-audit-{name}{suffix}-{stamp}.csv"'
     response["X-Content-Type-Options"] = "nosniff"
     return response
 
@@ -283,7 +302,12 @@ PAGE_PARAMETERS = [
         "page_size", OpenApiTypes.INT, description="1 à 100 (défaut 50) ; page * page_size ≤ 10 000."
     ),
 ]
-CSV_RESPONSE = OpenApiResponse(OpenApiTypes.STR, description="Fichier CSV (UTF-8), 10 000 lignes au plus.")
+CSV_RESPONSE = OpenApiResponse(
+    OpenApiTypes.STR,
+    description="Fichier CSV (UTF-8), 10 000 lignes au plus. Première colonne « mention » : "
+    "« DONNÉES DE DÉMONSTRATION » pour un organisme de démonstration, vide sinon ; journal plateforme : "
+    "statut enregistré dans l'entrée, « STATUT INDÉTERMINÉ » si un organisme est visé sans statut établi.",
+)
 
 
 # --- Organisme ----------------------------------------------------------------------------------------
@@ -392,6 +416,8 @@ class PlatformAuditExportView(HeavyAuditView):
             result = selectors.platform_export(scope, query)
         except ExportTooLarge as exc:
             raise _too_large(exc) from exc
+        except ExportMentionError as exc:
+            raise ExportRefused from exc
         return _csv_response(result, "plateforme")
 
 

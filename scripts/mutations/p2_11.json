@@ -1,0 +1,161 @@
+{
+  "phase": "P2.11",
+  "description": "Contre-épreuves par mutation de seed_demo, du marquage des comptes, de la mention de l'export d'audit et du statut de démonstration des événements plateforme. Une mutation à la fois ; chaque cible doit apparaître exactement une fois.",
+  "mutations": [
+    {
+      "id": "CP-01",
+      "origin": "historique (12/10/2026)",
+      "control": "Garde d'environnement (RBI_ENV)",
+      "file": "backend/apps/organizations/demo.py",
+      "target": "    if environment not in ALLOWED_ENVIRONMENTS:\n",
+      "replacement": "    if False:  # CP-01 : garde d'environnement retirée\n",
+      "detectors": [
+        "apps/organizations/tests/test_seed_demo.py::test_refused_outside_development_and_test"
+      ]
+    },
+    {
+      "id": "CP-02",
+      "origin": "historique (12/10/2026)",
+      "control": "Garde du rôle de base (rôle applicatif)",
+      "file": "backend/apps/organizations/demo.py",
+      "target": "    if current_database_role() != settings.RBI_DB_APP_ROLE:\n",
+      "replacement": "    if False:  # CP-02 : garde du rôle de base retirée\n",
+      "detectors": [
+        "apps/organizations/tests/test_seed_demo.py::test_refused_under_the_owner_role"
+      ]
+    },
+    {
+      "id": "CP-03",
+      "origin": "historique (12/10/2026)",
+      "control": "Acteur et permissions plateforme",
+      "file": "backend/apps/organizations/demo.py",
+      "target": "            organizations = platform_scope(actor, purpose=\"seed_demo\", permission=MANAGE_ORGANIZATIONS)\n            institutional = platform_scope(\n                actor, purpose=\"seed_demo\", permission=INSTITUTIONAL_ADMINS_PERMISSION\n            )\n",
+      "replacement": "            organizations = PlatformScope(actor_id=actor.pk, permission=MANAGE_ORGANIZATIONS, purpose=\"seed_demo\")  # CP-03\n            institutional = PlatformScope(actor_id=actor.pk, permission=INSTITUTIONAL_ADMINS_PERMISSION, purpose=\"seed_demo\")\n",
+      "detectors": [
+        "apps/organizations/tests/test_seed_demo.py::test_refused_for_a_platform_account_without_super_admin_role",
+        "apps/organizations/tests/test_seed_demo.py::test_refused_for_an_organisation_account",
+        "apps/organizations/tests/test_seed_demo.py::test_refused_for_an_inactive_super_admin"
+      ]
+    },
+    {
+      "id": "CP-04a",
+      "origin": "historique (12/10/2026)",
+      "control": "Collision avec un organisme non marqué",
+      "file": "backend/apps/organizations/demo.py",
+      "target": "        if same_short is not None and not same_short.is_demo:\n",
+      "replacement": "        if False:  # CP-04a : collision d'organisme non marqué non détectée\n",
+      "detectors": [
+        "apps/organizations/tests/test_seed_demo.py::test_collision_with_an_unmarked_organisation_refuses_without_writes"
+      ]
+    },
+    {
+      "id": "CP-04b",
+      "origin": "historique (12/10/2026), cible adaptée à la condition incluant is_demo",
+      "control": "Collision avec un compte hors du jeu",
+      "file": "backend/apps/organizations/demo.py",
+      "target": "            if (\n                user.organization_id is None\n",
+      "replacement": "            if False and (  # CP-04b : collision de compte non détectée par ce contrôle\n                user.organization_id is None\n",
+      "detectors": [
+        "apps/organizations/tests/test_seed_demo.py::test_collision_with_an_unmarked_account_refuses_without_writes",
+        "apps/organizations/tests/test_seed_demo.py::test_an_unmarked_account_of_the_set_refuses_without_writes"
+      ]
+    },
+    {
+      "id": "CP-05",
+      "origin": "historique (12/10/2026) ; détecteur de secret rendu direct",
+      "control": "Idempotence",
+      "file": "backend/apps/organizations/demo.py",
+      "target": "        existing = same_short\n",
+      "replacement": "        existing = None  # CP-05 : enregistrements déjà créés non reconnus\n",
+      "detectors": [
+        "apps/organizations/tests/test_seed_demo.py::test_second_run_creates_nothing_and_reports_presence",
+        "apps/organizations/tests/test_seed_demo.py::test_second_run_does_not_modify_existing_rows",
+        "apps/organizations/tests/test_seed_demo.py::test_existing_demo_accounts_with_changed_roles_are_never_modified",
+        "apps/organizations/tests/test_seed_demo.py::test_the_command_output_contains_no_secret"
+      ],
+      "expected_messages": [
+        "idempotence rompue"
+      ]
+    },
+    {
+      "id": "CP-06",
+      "origin": "historique (12/10/2026)",
+      "control": "Atomicité du lot",
+      "file": "backend/apps/organizations/demo.py",
+      "target": "        with transaction.atomic():\n",
+      "replacement": "        with __import__(\"contextlib\").nullcontext():  # CP-06 : transaction retirée\n",
+      "detectors": [
+        "apps/organizations/tests/test_seed_demo.py::test_failure_in_the_middle_of_the_batch_leaves_nothing"
+      ]
+    },
+    {
+      "id": "CP-07",
+      "origin": "historique (12/10/2026)",
+      "control": "Filtre applicatif d'organisme (isolation sans RLS)",
+      "file": "backend/apps/users/selectors.py",
+      "target": "        users = User.objects.filter(organization_id=org)\n",
+      "replacement": "        users = User.objects.all()  # CP-07 : filtre applicatif d'organisme retiré\n",
+      "detectors": [
+        "apps/organizations/tests/test_seed_demo.py::test_application_filter_isolates_without_rls"
+      ]
+    },
+    {
+      "id": "CP-08",
+      "origin": "nouvelle (marquage User.is_demo)",
+      "control": "Un compte du jeu sans marqueur fait refuser le lot",
+      "file": "backend/apps/organizations/demo.py",
+      "target": "                or not user.is_demo\n",
+      "replacement": "",
+      "detectors": [
+        "apps/organizations/tests/test_seed_demo.py::test_an_unmarked_account_of_the_set_refuses_without_writes"
+      ]
+    },
+    {
+      "id": "CP-09",
+      "origin": "nouvelle (mention de l'export d'audit) ; cible renommée avec la mention plateforme",
+      "control": "Mention « DONNÉES DE DÉMONSTRATION » dans l'export d'un organisme de démonstration",
+      "file": "backend/apps/audit/api.py",
+      "target": "    organization_mention = _cell(DEMO_MENTION if result.demo else None)\n",
+      "replacement": "    organization_mention = _cell(None)  # CP-09 : mention retirée\n",
+      "detectors": [
+        "apps/audit/tests/test_audit_api.py::test_export_of_a_demo_organisation_is_marked_on_every_row"
+      ]
+    },
+    {
+      "id": "CP-10",
+      "origin": "nouvelle (marquage User.is_demo)",
+      "control": "Compte de démonstration refusé hors organisme de démonstration",
+      "file": "backend/apps/users/services.py",
+      "target": "    if is_demo and not organization.is_demo:\n",
+      "replacement": "    if False:  # CP-10 : cohérence compte / organisme retirée\n",
+      "detectors": [
+        "apps/organizations/tests/test_seed_demo.py::test_services_refuse_a_demo_account_outside_a_demo_organisation"
+      ]
+    },
+    {
+      "id": "CP-11",
+      "origin": "nouvelle (mention de l'export plateforme)",
+      "control": "Mention par entrée du journal plateforme, lue dans les métadonnées scellées",
+      "file": "backend/apps/audit/api.py",
+      "target": "            organization_mention if result.statuses is None else _cell(MENTIONS[result.statuses[row.id]])\n",
+      "replacement": "            organization_mention  # CP-11 : mention plateforme neutralisée\n",
+      "detectors": [
+        "apps/audit/tests/test_platform_demo_mention.py::test_platform_export_marks_each_row_from_its_recorded_status",
+        "apps/audit/tests/test_platform_demo_mention.py::test_missing_null_or_mistyped_status_is_undetermined_never_ordinary"
+      ]
+    },
+    {
+      "id": "CP-12",
+      "origin": "nouvelle (statut de démonstration des événements plateforme)",
+      "control": "Clé demo obligatoire sur un appel métier (transition d'organisme réussie)",
+      "file": "backend/apps/organizations/services.py",
+      "target": "        details={\"reason\": reason, \"demo\": org.is_demo},\n",
+      "replacement": "        details={\"reason\": reason},  # CP-12 : clé demo retirée\n",
+      "detectors": [
+        "apps/audit/tests/test_platform_demo_mention.py::test_every_platform_event_on_an_organisation_records_its_demo_status",
+        "apps/audit/tests/test_platform_demo_mention.py::test_seed_demo_events_are_all_marked",
+        "apps/audit/tests/test_platform_demo_mention.py::test_platform_export_marks_each_row_from_its_recorded_status"
+      ]
+    }
+  ]
+}

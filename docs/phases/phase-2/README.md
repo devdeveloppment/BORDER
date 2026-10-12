@@ -14,5 +14,5 @@ Chaque sous-phase est validée explicitement par le propriétaire du projet avan
 | P2.8 | API v1 + OpenAPI | terminée — [rapport](P2.8-RAPPORT.md) · [ADR 0010](../../adr/0010-api-rest-v1.md) |
 | — | Données de démonstration + seed_demo | replanifiées : première tâche de P2.11 (décision D6, P2.10) |
 | P2.10 | Intégration frontend ↔ backend, Nginx, proxy de confiance, E2E réels | clôturée et validée (contre-épreuves CP-01 à CP-04 concluantes ; ne vaut pas autorisation de production) — [rapport](P2.10-RAPPORT.md) · [ADR 0012](../../adr/0012-integration-frontend-backend.md) |
-| P2.11 | seed_demo (socle : deux organismes, cinq comptes par organisme) | implémentée et testée, en attente de validation — [rapport](P2.11-RAPPORT.md) · [ADR 0013](../../adr/0013-donnees-demonstration.md) |
+| P2.11 | seed_demo (socle : deux organismes, cinq comptes par organisme) | validée avec réserves (défaut `search_path` corrigé en développement, à confirmer par le test d'intrusion ; écarts §26 ; ADR 0013 proposée ; ne vaut pas autorisation de pilote) — [rapport](P2.11-RAPPORT.md) · [ADR 0013](../../adr/0013-donnees-demonstration.md) |
 | P2.12 | Validation finale P2 | à venir |

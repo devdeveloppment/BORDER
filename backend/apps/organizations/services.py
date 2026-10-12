@@ -66,7 +66,7 @@ def _transition(
             scope="platform",
             object_type="organization",
             object_id=org.pk,
-            details={"from": org.status, "to": target},
+            details={"from": org.status, "to": target, "demo": org.is_demo},
         )
         raise InvalidTransition(f"Transition {org.status} → {target} non autorisée.")
     previous = org.status
@@ -82,7 +82,7 @@ def _transition(
         object_id=org.pk,
         old_value={"status": previous},
         new_value={"status": target},
-        details={"reason": reason},
+        details={"reason": reason, "demo": org.is_demo},
     )
     organization.refresh_from_db()
     return org
@@ -111,7 +111,7 @@ def _require_valid_authorization(scope: PlatformScope, organization: Organizatio
             scope="platform",
             object_type="organization",
             object_id=organization.pk,
-            details={"reason": "no_valid_authorization"},
+            details={"reason": "no_valid_authorization", "demo": organization.is_demo},
         )
         raise InvalidTransition("Aucune autorisation formelle en vigueur pour cet organisme.")
 
@@ -214,7 +214,10 @@ def register_organization(
         object_type="organization",
         object_id=organization.pk,
         new_value={"status": organization.status, "short_name": organization.short_name},
-        details={"access_request": access_request.pk if access_request else None},
+        details={
+            "access_request": access_request.pk if access_request else None,
+            "demo": organization.is_demo,
+        },
     )
     return organization
 
@@ -244,7 +247,7 @@ def update_organization(scope: PlatformScope, organization: Organization, **chan
         object_id=org.pk,
         old_value=before,
         new_value={field: getattr(org, field) for field in sorted(changes)},
-        details={"fields": sorted(changes)},
+        details={"fields": sorted(changes), "demo": org.is_demo},  # statut APRÈS la modification
     )
     organization.refresh_from_db()
     return org
@@ -320,6 +323,7 @@ def add_authorization(
             "valid_from": authorization.valid_from,
             "valid_until": authorization.valid_until,
         },
+        details={"demo": org.is_demo},
     )
     return authorization
 
@@ -348,7 +352,7 @@ def activate_organization(scope: PlatformScope, organization: Organization) -> O
             scope="platform",
             object_type="organization",
             object_id=org.pk,
-            details={"reason": "no_institutional_admin"},
+            details={"reason": "no_institutional_admin", "demo": org.is_demo},
         )
         raise InvalidTransition("Aucun Administrateur institutionnel actif : activation impossible.")
     return _transition(scope, organization, Status.ACTIVE)

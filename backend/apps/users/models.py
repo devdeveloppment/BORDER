@@ -37,6 +37,12 @@ class User(AbstractBaseUser):
     first_name = models.CharField("prénom", max_length=150, blank=True)
     last_name = models.CharField("nom", max_length=150, blank=True)
     is_active = models.BooleanField("actif", default=True)
+    # Compte créé par seed_demo (spécification §26) : toujours dans un organisme de démonstration ; jamais
+    # positionné par l'API. Un compte ajouté ensuite à un organisme de démonstration reste à faux.
+    # La valeur par défaut est aussi posée en base par la migration 0006 (insertion hors ORM). Pas de
+    # ``db_default`` : il ferait lire la valeur par INSERT … RETURNING, que la politique RLS de lecture refuse
+    # pour un compte créé hors du périmètre lecteur (désignation par la plateforme).
+    is_demo = models.BooleanField("compte de démonstration", default=False)
     date_joined = models.DateTimeField("date de création", default=timezone.now)
     # Renouvelé à chaque événement de sécurité (mot de passe, MFA, désactivation, révocation des sessions) :
     # il entre dans l'empreinte de session et dans les jetons de réinitialisation, qui deviennent tous

@@ -82,6 +82,13 @@ applicatif. À réévaluer si un rôle de maintenance distinct du propriétaire 
 La plateforme n'a jamais besoin de lire les comptes ni les secrets des organismes : ces fonctions renvoient le strict
 nécessaire.
 
+**`search_path` (complément du 12/10/2026)** : toutes les fonctions `SECURITY DEFINER` du projet (huit, dont celles
+des ADR 0009 et 0010) fixent `search_path = pg_catalog, public, pg_temp` depuis la migration
+`core.0003_definer_search_path`. `pg_temp` doit rester **en dernier** : sinon une table temporaire créée par le rôle
+applicatif masquerait une table de `public` dans ces fonctions (défaut découvert en P2.11). Toute nouvelle fonction
+`SECURITY DEFINER` doit porter la même clause ; le test `test_every_security_definer_function_puts_pg_temp_last`
+échoue sinon.
+
 ### 5. Identité, sessions et MFA
 
 - **Avant authentification** : la recherche par e-mail ne rend visibles que ce compte et son organisme (`app.auth_email`) ;

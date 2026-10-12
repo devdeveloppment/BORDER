@@ -458,7 +458,7 @@ class PlatformInstitutionalAdminView(RBIAPIView):
                 scope="platform",
                 object_type="organization",
                 object_id=organization.pk,
-                details={"reason": "email_unavailable"},
+                details={"reason": "email_unavailable", "demo": organization.is_demo},
             )
             raise ValidationError({"email": ["Cette adresse ne peut pas être utilisée."]}) from exc
         return Response({"id": str(user.pk), "email": user.email}, status=201)

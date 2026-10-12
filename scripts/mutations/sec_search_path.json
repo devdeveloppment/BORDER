@@ -1,0 +1,46 @@
+{
+  "phase": "Sécurité — search_path des fonctions SECURITY DEFINER (suite de P2.11)",
+  "description": "Contre-épreuves de la migration core.0003 : chaque mutation rétablit tout ou partie de la configuration vulnérable ; la base de test est recréée par migration à chaque exécution. Une mutation à la fois ; chaque cible doit apparaître exactement une fois.",
+  "mutations": [
+    {
+      "id": "SP-01",
+      "origin": "nouvelle",
+      "control": "pg_temp placé en dernier dans le search_path des huit fonctions",
+      "file": "backend/apps/core/migrations/0003_definer_search_path.py",
+      "target": "SAFE = \"pg_catalog, public, pg_temp\"\n",
+      "replacement": "SAFE = \"pg_catalog, public\"  # SP-01 : pg_temp retiré\n",
+      "detectors": [
+        "apps/core/tests/test_definer_search_path.py::test_every_security_definer_function_puts_pg_temp_last",
+        "apps/core/tests/test_definer_search_path.py::test_temporary_tables_do_not_fool_the_platform_audit_reader",
+        "apps/core/tests/test_definer_search_path.py::test_temporary_tables_do_not_fool_the_organisation_audit_reader",
+        "apps/core/tests/test_definer_search_path.py::test_temporary_tables_do_not_change_the_organisation_of_the_current_account",
+        "apps/core/tests/test_definer_search_path.py::test_temporary_tables_do_not_allow_resetting_another_accounts_mfa",
+        "apps/core/tests/test_definer_search_path.py::test_a_temporary_chain_head_does_not_divert_the_audit_seal"
+      ]
+    },
+    {
+      "id": "SP-02",
+      "origin": "nouvelle",
+      "control": "Fonction du déclencheur d'audit couverte par la migration",
+      "file": "backend/apps/core/migrations/0003_definer_search_path.py",
+      "target": "    \"public.rbi_audit_seal()\",\n",
+      "replacement": "",
+      "detectors": [
+        "apps/core/tests/test_definer_search_path.py::test_every_security_definer_function_puts_pg_temp_last",
+        "apps/core/tests/test_definer_search_path.py::test_a_temporary_chain_head_does_not_divert_the_audit_seal"
+      ]
+    },
+    {
+      "id": "SP-03",
+      "origin": "nouvelle",
+      "control": "Fonction d'écriture rbi_admin_reset_mfa couverte par la migration",
+      "file": "backend/apps/core/migrations/0003_definer_search_path.py",
+      "target": "    \"public.rbi_admin_reset_mfa(uuid)\",\n",
+      "replacement": "",
+      "detectors": [
+        "apps/core/tests/test_definer_search_path.py::test_every_security_definer_function_puts_pg_temp_last",
+        "apps/core/tests/test_definer_search_path.py::test_temporary_tables_do_not_allow_resetting_another_accounts_mfa"
+      ]
+    }
+  ]
+}

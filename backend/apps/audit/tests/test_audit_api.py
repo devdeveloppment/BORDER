@@ -301,3 +301,61 @@ def test_application_filter_isolates_the_journal_even_without_rls(
         export = api.get("/audit-logs/export").content.decode()
     assert {e["organization_id"] for e in page["results"]} == {str(journal["org_a"].pk)}
     assert str(journal["org_b"].pk) not in export
+
+
+# --- Mention des données de démonstration dans l'export (§26) ------------------------------------------
+
+
+def _export_rows(response: Any) -> list[list[str]]:
+    return list(csv.reader(io.StringIO(response.content.decode("utf-8"))))
+
+
+def test_export_of_a_demo_organisation_is_marked_on_every_row(journal: dict[str, Any], admin_a: User) -> None:
+    with owner():
+        Organization.objects.filter(pk=journal["org_a"].pk).update(is_demo=True)
+    response = signed_in(admin_a).get("/audit-logs/export?action=user")
+    assert response.status_code == 200
+    disposition = response["Content-Disposition"]
+    assert disposition.startswith('attachment; filename="rbi-audit-organisme-demonstration-')
+    rows = _export_rows(response)
+    assert rows[0][0] == "mention" and rows[0][1:] == list(api_module().CSV_COLUMNS)
+    assert len(rows) > 1 and all(row[0] == "DONNÉES DE DÉMONSTRATION" for row in rows[1:])
+    assert all(len(row) == len(rows[0]) for row in rows)  # CSV rectangulaire, donc valide
+
+
+def test_export_of_an_ordinary_organisation_has_an_empty_mention(
+    journal: dict[str, Any], admin_a: User
+) -> None:
+    with owner():
+        Organization.objects.filter(pk=journal["org_a"].pk).update(is_demo=False)  # organisme ordinaire
+    response = signed_in(admin_a).get("/audit-logs/export?action=user")
+    assert "demonstration" not in response["Content-Disposition"]
+    rows = _export_rows(response)
+    assert rows[0][0] == "mention" and len(rows) > 1
+    assert all(row[0] == "" for row in rows[1:])
+
+
+def test_platform_export_keeps_an_empty_mention(journal: dict[str, Any]) -> None:
+    """Entrées plateforme sans organisme visé : colonne vide, même si un organisme de démonstration existe (le
+    statut par entrée est couvert par test_platform_demo_mention)."""
+    auditor = create_user("auditeur.mention@plateforme.rbi.test")
+    grant_role(auditor, "AUDITOR")
+    with owner():
+        Organization.objects.filter(pk=journal["org_a"].pk).update(is_demo=True)
+    response = signed_in(auditor).get("/platform/audit-logs/export")
+    assert response.status_code == 200, response.content[:200]
+    rows = _export_rows(response)
+    assert rows[0][0] == "mention"
+    assert all(row[0] == "" for row in rows[1:])
+
+
+def test_the_mention_never_starts_like_a_formula() -> None:
+    from apps.audit.api import DEMO_MENTION, _cell
+
+    assert _cell(DEMO_MENTION) == DEMO_MENTION and DEMO_MENTION[:1] not in ("=", "+", "-", "@", "\t", "\r")
+
+
+def api_module() -> Any:
+    from apps.audit import api
+
+    return api

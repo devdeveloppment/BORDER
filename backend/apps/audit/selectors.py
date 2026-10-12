@@ -22,6 +22,7 @@ from typing import Any, Literal
 from django.db.models import Q, QuerySet
 
 from apps.core.db_scope import db_scope
+from apps.organizations.models import Organization
 from apps.organizations.platform import PlatformScope, platform_operation
 from apps.organizations.tenancy import TenantContext
 from apps.users.models import User
@@ -208,11 +209,47 @@ class AuditQuery:
         }
 
 
+DemoStatus = Literal["demo", "undetermined"] | None
+
+
 @dataclass(frozen=True, slots=True)
 class AuditResult:
     count: int
     rows: list[AuditLog]
     actors: dict[uuid.UUID, str]  # adresse des acteurs LISIBLES dans le périmètre courant (RLS)
+    # Organisme de démonstration (§26) : l'export de l'organisme l'indique sur chaque ligne.
+    demo: bool = False
+    # Journal plateforme : statut par entrée (identifiant → « demo », « undetermined » ou None), établi à
+    # partir des seules métadonnées scellées ; None ici = export d'organisme.
+    statuses: dict[int, DemoStatus] | None = None
+
+
+class ExportMentionError(Exception):
+    """Statut de démonstration impossible à établir pour une entrée : l'export est refusé, jamais complété par
+    une cellule vide."""
+
+
+def platform_demo_status(row: AuditLog) -> DemoStatus:
+    """Statut de démonstration d'une entrée du journal plateforme (§26), lu dans ses SEULES métadonnées.
+
+    La clé ``demo`` est écrite à la création de l'événement par l'opération plateforme, qui avait l'organisme
+    dans son périmètre ; elle entre dans l'empreinte de l'entrée. Aucune lecture des organismes ici (le
+    périmètre ``platform.audit`` ne les voit pas, et la politique RLS n'est pas élargie).
+
+    - entrée sans organisme visé (ni ``organization_id`` ni objet ``organization``) : None ;
+    - ``demo`` vaut exactement ``True`` : « demo » ; exactement ``False`` : None (organisme ordinaire) ;
+    - clé absente, nulle ou d'un autre type : « undetermined », jamais « ordinaire ».
+    """
+    if not isinstance(row.metadata, dict):
+        raise ExportMentionError(row.id)
+    if row.organization_id is None and row.object_type != "organization":
+        return None
+    value = row.metadata.get("demo")
+    if value is True:
+        return "demo"
+    if value is False:
+        return None
+    return "undetermined"
 
 
 def _actor_labels(rows: list[AuditLog]) -> dict[uuid.UUID, str]:
@@ -272,6 +309,8 @@ def organization_export(actor: User, context: TenantContext, query: AuditQuery) 
     try:
         with _org_scope(actor, context):
             result = _export(AuditLog.objects.filter(organization_id=context.organization_id), query)
+            demo = Organization.objects.filter(pk=context.organization_id, is_demo=True).exists()
+        result = AuditResult(result.count, result.rows, result.actors, demo=demo)
     except ExportTooLarge as exc:
         record_event(
             "audit.export",
@@ -307,6 +346,7 @@ def platform_page(scope: PlatformScope, query: AuditQuery, *, offset: int, limit
 def platform_export(scope: PlatformScope, query: AuditQuery) -> AuditResult:
     try:
         result = _export(AuditLog.objects.filter(scope=AuditLog.Scope.PLATFORM), query)
+        statuses = {row.id: platform_demo_status(row) for row in result.rows}
     except ExportTooLarge as exc:
         record_event(
             "audit.export",
@@ -315,10 +355,25 @@ def platform_export(scope: PlatformScope, query: AuditQuery) -> AuditResult:
             details={"reason": "too_many_rows", "count": exc.count, **query.describe()},
         )
         raise
+    except ExportMentionError:
+        record_event(
+            "audit.export",
+            outcome="failure",
+            actor_id=scope.actor_id,
+            details={"reason": "demo_status_unavailable", **query.describe()},
+        )
+        raise
+    values = list(statuses.values())
     record_event(
         "audit.export",
         outcome="success",
         actor_id=scope.actor_id,
-        details={"rows": result.count, "format": "csv", **query.describe()},
+        details={
+            "rows": result.count,
+            "format": "csv",
+            "demo_rows": values.count("demo"),
+            "undetermined_rows": values.count("undetermined"),
+            **query.describe(),
+        },
     )
-    return result
+    return AuditResult(result.count, result.rows, result.actors, statuses=statuses)
